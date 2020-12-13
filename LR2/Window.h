@@ -4,17 +4,19 @@
 #include <SDL2/SDL.h>
 #include <memory>
 
-#include "Memory.h"
-#include "IO.h"
 #include "Z80CPU.h"
+#include "InpOut.h"
+#include "Memory.h"
 #include "AudioDriver.h"
 
-class Window
-{
+class Window {
 public:
-	static constexpr int DEFAULT_WIDTH = 800;
-	static constexpr int DEFAULT_HEIGHT = 600;
-	static constexpr int PIXEL_SCALE = 2;
+	static constexpr int DEFAULT_WIDTH = 880;
+	static constexpr int WIDTH_POINT = 55;
+	static constexpr int DEFAULT_HEIGHT = 660;
+	static constexpr int HEIGHT_POINT = 40;
+	static constexpr int PIXEL_SCALE = 3;
+
 protected:
 	int _width, _height;
 	std::shared_ptr<SDL_Window> _window;
@@ -33,17 +35,12 @@ public:
 	Window(Window &&) = delete;
 
 	void main();
-
 protected:
-	ROM rom { "zx.rom" };
-	RAM ram { 16 };
+	ROM rom { "spec128.rom" };
+	RAM ram { 17 };
 	IO io { &_adrv };
 	AddressSpace system_bus { ram, rom, io };
-	Z80CPU cpu { system_bus };
+	Z80CPU cpu { system_bus, ram, io };
 };
-
-
-
-
 
 #endif /* WINDOW_H_ */
