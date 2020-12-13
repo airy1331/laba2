@@ -1,3 +1,4 @@
+
 #ifndef AUDIODRIVER_H_
 #define AUDIODRIVER_H_
 
@@ -18,7 +19,6 @@ public:
 
 	void set_level(short level) { _level = level; }
 };
-
 
 
 
