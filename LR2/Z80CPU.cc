@@ -50,7 +50,7 @@ struct Z80_Header_1
 #pragma pack(push, 1)
 struct Z80_Header_2
 {
-//	uint16_t hdrlen;
+
 	uint16_t PC;
 	uint8_t hw;
 	uint8_t ext0;
@@ -68,104 +68,157 @@ struct Z80_Header_2
 };
 #pragma pack(pop)
 
-byte In_mem(void* param, ushort address)
+Z80EX_BYTE In_memo(Z80EX_CONTEXT *cpu, Z80EX_WORD addr, int m1_state, void *user_data)
 {
-	return reinterpret_cast<Z80CPU*>(param)->_bus.read(address);
+	return reinterpret_cast<Z80CPU*>(user_data)->_bus.read(addr);
 }
-void Out_mem(void* param, ushort address,byte data)
+
+void Out_memo(Z80EX_CONTEXT *cpu, Z80EX_WORD addr, Z80EX_BYTE value, void *user_data)
 {
-	reinterpret_cast<Z80CPU*>(param)->_bus.write(address, data);
+	reinterpret_cast<Z80CPU*>(user_data)->_bus.write(addr, value);
 }
-byte In_io(void* param, ushort address)
+
+Z80EX_BYTE In_inpout(Z80EX_CONTEXT *cpu, Z80EX_WORD port, void *user_data)
 {
-	return reinterpret_cast<Z80CPU*>(param)->_bus.read(address,true);
+	return reinterpret_cast<Z80CPU*>(user_data)->_bus.read(port, true);
 }
-void Out_io(void* param, ushort address,byte data)
+
+void Out_inpout(Z80EX_CONTEXT *cpu, Z80EX_WORD port, Z80EX_BYTE value, void *user_data)
 {
-	reinterpret_cast<Z80CPU*>(param)->_bus.write(address, data,true);
+	reinterpret_cast<Z80CPU*>(user_data)->_bus.write(port, value, true);
+}
+
+Z80EX_BYTE Int_read(Z80EX_CONTEXT *cpu, void *user_data)
+{
+	return reinterpret_cast<Z80CPU*>(user_data)->_intr;
+}
+
+Z80CPU::Z80CPU(AddressSpace & bus, RAM & ram, IO & io)
+    : _io(io), _ram(ram), _bus(bus)
+{
+	_context = z80ex_create(In_memo, this, Out_memo, this,
+							In_inpout, this, Out_inpout, this,
+							Int_read, this);
+}
+
+Z80CPU::~Z80CPU()
+{
+	z80ex_destroy(_context);
+}
+
+void Z80CPU::tick()
+{
+	z80ex_step(_context);
+}
+
+void Z80CPU::ticks(unsigned ticks)
+{
+	int steps = ticks;
+
+	while (steps >= 0)
+		steps -= z80ex_step(_context);
+}
+
+void Z80CPU::reset()
+{
+	z80ex_reset(_context);
+}
+
+void Z80CPU::intr(Z80EX_BYTE value)
+{
+	_intr = value;
+	z80ex_int(_context);
+}
+
+void Z80CPU::nmi()
+{
+	z80ex_nmi(_context);
 }
 
 void Z80CPU::save_state_sna(const char *filename)
 {
 	SNA_Header hdr;
-	std::vector<uint8_t> data;
-	data.resize(16384 * 3);
-	for (unsigned memptr = 16384; memptr < 65536; memptr++)
-		data[memptr - 16384] = _bus.read(memptr);
-	hdr.I = _context.I;
-	hdr.HL1 = _context.R2.wr.HL;
-	hdr.DE1 = _context.R2.wr.DE;
-	hdr.BC1 = _context.R2.wr.BC;
-	hdr.AF1 = _context.R2.wr.AF;
-	hdr.HL = _context.R1.wr.HL;
-	hdr.DE = _context.R1.wr.DE;
-	hdr.BC = _context.R1.wr.BC;
-	hdr.IY = _context.R1.wr.IY;
-	hdr.IX = _context.R1.wr.IX;
-	hdr.IFF2 = _context.IFF2;
-	hdr.R = _context.R;
-	hdr.AF = _context.R1.wr.AF;
-	hdr.SP = _context.R1.wr.SP;
-	hdr.IM = _context.IM;
-	hdr.FE = 0;
-	hdr.SP -= 2;
-	data[hdr.SP - 16384] = _context.PC & 0x00ff;
-	data[hdr.SP - 16384 + 1] = _context.PC >> 8;
+	std::vector<uint8_t> ram(128 * 1024);
+	uint16_t pc;
+	uint8_t memory_reg;
+
+	for (unsigned i = 0; i < ram.size(); i++)
+		ram[i] = _ram.read(i);
+
+	hdr.I = z80ex_get_reg(_context, regI);
+	hdr.HL1 = z80ex_get_reg(_context, regHL_);
+	hdr.DE1 = z80ex_get_reg(_context, regDE_);
+	hdr.BC1 = z80ex_get_reg(_context, regBC_);
+	hdr.AF1 = z80ex_get_reg(_context, regAF_);
+	hdr.HL = z80ex_get_reg(_context, regHL);
+	hdr.DE = z80ex_get_reg(_context, regDE);
+	hdr.BC = z80ex_get_reg(_context, regBC);
+	hdr.IY = z80ex_get_reg(_context, regIY);
+	hdr.IX = z80ex_get_reg(_context, regIX);
+	hdr.IFF2 = z80ex_get_reg(_context, regIFF2);
+	hdr.R = z80ex_get_reg(_context, regR);
+	hdr.AF = z80ex_get_reg(_context, regAF);
+	hdr.SP = z80ex_get_reg(_context, regSP);
+	hdr.IM = z80ex_get_reg(_context, regIM);
+	hdr.FE = _io.border();
+
+	pc = z80ex_get_reg(_context, regPC);
+	memory_reg = _io.mem();
 
 	std::fstream sna;
 	sna.open(filename, std::ios::out | std::ios::binary);
 	sna.write(reinterpret_cast<const char *>(&hdr), sizeof(hdr));
-	sna.write(reinterpret_cast<const char *>(&data[0]), data.size());
+	sna.write(reinterpret_cast<const char *>(&ram[0]), 16 * 1024);
+	sna.write(reinterpret_cast<const char *>(&pc), sizeof(pc));
+	sna.write(reinterpret_cast<const char *>(&memory_reg), sizeof(memory_reg));
+	sna.write(reinterpret_cast<const char *>(&ram[16 * 1024]), (128 - 16) * 1024);
 	sna.close();
 }
 
 void Z80CPU::load_state_sna(const char *filename)
 {
 	SNA_Header hdr;
-	std::vector<uint8_t> data;
-	data.resize(16384 * 3);
+	std::vector<uint8_t> ram(128 * 1024);
+	uint16_t pc;
+	uint8_t memory_reg;
 
 	std::fstream sna;
 	sna.open(filename, std::ios::in | std::ios::binary);
 	sna.read(reinterpret_cast<char *>(&hdr), sizeof(hdr));
-	sna.read(reinterpret_cast<char *>(&data[0]), data.size());
+	sna.read(reinterpret_cast<char *>(&ram[0]), 16 * 1024);
+	sna.read(reinterpret_cast<char *>(&pc), sizeof(pc));
+	sna.read(reinterpret_cast<char *>(&memory_reg), sizeof(memory_reg));
+	sna.read(reinterpret_cast<char *>(&ram[16 * 1024]), (128 - 16) * 1024);
 
-	data[hdr.SP - 16384] = _context.PC & 0x00ff;
-	data[hdr.SP - 16384 + 1] = _context.PC >> 8;
+    z80ex_set_reg(_context, regI, hdr.I);
+    z80ex_set_reg(_context, regHL_, hdr.HL1);
+    z80ex_set_reg(_context, regDE_, hdr.DE1);
+    z80ex_set_reg(_context, regBC_, hdr.BC1);
+    z80ex_set_reg(_context, regAF_, hdr.AF1);
+    z80ex_set_reg(_context, regHL, hdr.HL);
+    z80ex_set_reg(_context, regDE, hdr.DE);
+    z80ex_set_reg(_context, regBC, hdr.BC);
+    z80ex_set_reg(_context, regIY, hdr.IY);
+    z80ex_set_reg(_context, regIX, hdr.IX);
+    z80ex_set_reg(_context, regIFF2, hdr.IFF2);
+    z80ex_set_reg(_context, regR, hdr.R);
+    z80ex_set_reg(_context, regAF, hdr.AF);
+    z80ex_set_reg(_context, regSP, hdr.SP);
+    z80ex_set_reg(_context, regIM, hdr.IM);
 
-	_context.PC  = 0;
-	_context.PC  |= data[hdr.SP - 16384];
-	_context.PC  |= (data[hdr.SP - 16384 + 1] << 8);
-	hdr.SP += 2;
+    z80ex_set_reg(_context, regPC, pc);
+    z80ex_set_reg(_context, regIFF1, hdr.IFF2);
 
-	for (unsigned memptr = 16384; memptr < 65536; memptr++)
-		_bus.write(memptr, data[memptr - 16384]);
+	for (unsigned i = 0; i < ram.size(); i++)
+		_ram.write(i, ram[i]);
 
-
-	_context.I = hdr.I;
-	_context.R2.wr.HL= hdr.HL1;
-	_context.R2.wr.DE = hdr.DE1;
-	_context.R2.wr.BC = hdr.BC1;
-	_context.R2.wr.AF = hdr.AF1;
-	_context.R1.wr.HL = hdr.HL;
-	_context.R1.wr.DE = hdr.DE;
-	_context.R1.wr.BC = hdr.BC;
-	_context.R1.wr.IY = hdr.IY;
-	_context.R1.wr.IX = hdr.IX;
-	_context.IFF2 = hdr.IFF2;
-	_context.R = hdr.R;
-	_context.R1.wr.AF = hdr.AF;
-	_context.R1.wr.SP = hdr.SP;
-	_context.IM = hdr.IM;
-
+	_bus.write(0xfd, memory_reg, true);
 	_bus.write(0xfe, hdr.FE, true);
-
-	_context.IFF1 = _context.IFF2;
 }
 
 void Z80CPU::load_state_z80(const char *filename)
 {
-	[[maybe_unused]] int version = 1;
+	int version = 1;
 	uint16_t real_pc;
 	Z80_Header_1 hdr1;
 	Z80_Header_2 hdr2;
@@ -176,72 +229,77 @@ void Z80CPU::load_state_z80(const char *filename)
 	std::fstream z80f;
 	z80f.open(filename, std::ios::in | std::ios::binary);
 	z80f.read(reinterpret_cast<char *>(&hdr1), sizeof(hdr1));
-	if (hdr1.PC == 0) {
+	if (hdr1.PC == 0)
+	{
 		version = 2;
 		uint16_t hdr2size;
 		z80f.read(reinterpret_cast<char *>(&hdr2size), 2);
 		z80f.read(reinterpret_cast<char *>(&hdr2), hdr2size);
-	} else {
+		real_pc = hdr2.PC;
+	}
+	else
+	{
 		real_pc = hdr1.PC;
 	}
 
-	_context.R1.br.A = hdr1.A;
-	_context.R1.br.F = hdr1.F;
-	_context.R1.br.C= hdr1.C;
-	_context.R1.br.B = hdr1.B;
-	_context.R1.br.L = hdr1.L;
-	_context.R1.br.H= hdr1.H;
-	_context.PC = real_pc;
-	_context.R1.wr.SP = hdr1.SP;
-	_context.I = hdr1.I;
-	_context.R = hdr1.R;
-	_context.R1.br.E = hdr1.E;
-	_context.R1.br.D = hdr1.D;
-	_context.R2.br.C = hdr1.C1;
-	_context.R2.br.B = hdr1.B1;
-	_context.R2.br.E = hdr1.E1;
-	_context.R2.br.D = hdr1.D1;
-	_context.R2.br.L = hdr1.L1;
-	_context.R2.br.H = hdr1.H1;
-	_context.R2.br.A= hdr1.A1;
-	_context.R2.br.F = hdr1.F1;
-	_context.R1.br.IYl = hdr1.IYL;
-	_context.R1.br.IYh = hdr1.IYH;
-	_context.R1.br.IXl = hdr1.IXL;
-	_context.R1.br.IXh = hdr1.IXH;
-	_context.IFF1 = hdr1.IFF1;
-	_context.IFF2 = hdr1.IFF2;
+	z80ex_set_reg(_context, regAF,   hdr1.A << 8 | hdr1.F);
+	z80ex_set_reg(_context, regBC,   hdr1.B << 8 | hdr1.C);
+	z80ex_set_reg(_context, regHL,   hdr1.H << 8 | hdr1.L);
+	z80ex_set_reg(_context, regPC,   real_pc);
+	z80ex_set_reg(_context, regSP,   hdr1.SP);
+	z80ex_set_reg(_context, regI,    hdr1.I);
+	z80ex_set_reg(_context, regR,    hdr1.R);
+	z80ex_set_reg(_context, regDE,   hdr1.D << 8 | hdr1.E);
+	z80ex_set_reg(_context, regBC_,  hdr1.B1 << 8 | hdr1.C1);
+	z80ex_set_reg(_context, regDE_,  hdr1.D1 << 8 | hdr1.E1);
+	z80ex_set_reg(_context, regHL_,  hdr1.H1 << 8 | hdr1.L1);
+	z80ex_set_reg(_context, regAF_,  hdr1.A1 << 8 | hdr1.F1);
+	z80ex_set_reg(_context, regIY,   hdr1.IYH << 8 | hdr1.IYL);
+	z80ex_set_reg(_context, regIX,   hdr1.IXH << 8 | hdr1.IXL);
+	z80ex_set_reg(_context, regIFF1, hdr1.IFF1);
+	z80ex_set_reg(_context, regIFF2, hdr1.IFF2);
 
 	_bus.write(0xfe, (hdr1.stuffs1 >> 1) & 0x07, true);
-	_context.IM = hdr1.stuffs2 & 0x03;
+	z80ex_set_reg(_context, regIM, hdr1.stuffs2 & 0x03);
 
-	if (hdr1.stuffs1 & 0x20) {
+	if (hdr1.stuffs1 & 0x20)
+	{
 		uint16_t memptr = 0;
 		uint8_t b1, b2, xx, yy;
 
-		do {
+		do
+		{
 			z80f.read(reinterpret_cast<char *>(&b1), 1);
-			if (b1 != 0xed) {
+			if (b1 != 0xed)
+			{
 				data[memptr] = b1;
 				memptr++;
-			} else {
+			}
+			else
+			{
 				z80f.read(reinterpret_cast<char *>(&b2), 1);
-				if (b2 != 0xed) {
+				if (b2 != 0xed)
+				{
 					data[memptr] = b1;
 					memptr++;
 					data[memptr] = b2;
 					memptr++;
-				} else {
+				}
+				else
+				{
 					z80f.read(reinterpret_cast<char *>(&xx), 1);
 					z80f.read(reinterpret_cast<char *>(&yy), 1);
-					while (yy > 0) {
+					while (yy > 0)
+					{
 						data[memptr++] = xx;
 					}
 				}
 			}
 		} while (z80f.good() and not z80f.eof());
 
-	} else {
+	}
+	else
+	{
 		z80f.readsome(reinterpret_cast<char *>(&data[0]), data.size());
 	}
 
