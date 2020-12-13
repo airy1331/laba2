@@ -1,3 +1,6 @@
+/*
+ * Window.cc
+*/
 #include <stdexcept>
 #include "Window.h"
 #include <map>
@@ -14,24 +17,13 @@ Window::Window(int width, int height)
 : _width(width), _height(height)
 {
 	_window = std::shared_ptr<SDL_Window>(
-			SDL_CreateWindow(
-					"ZX Spectrum Emu",
-					SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-					width, height,
-					SDL_WINDOW_SHOWN),
-			SDL_DestroyWindow);
+			SDL_CreateWindow("Emulator", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, width, height, SDL_WINDOW_SHOWN), SDL_DestroyWindow);
 	if (_window == nullptr)
-		throw std::runtime_error(
-				std::string("Window creation failed: ") +
-				SDL_GetError());
+		throw std::runtime_error(std::string("Window creation failed: ") + SDL_GetError());
 
-	_renderer = std::shared_ptr<SDL_Renderer>(
-			SDL_CreateRenderer(_window.get(), -1, SDL_RENDERER_ACCELERATED),
-			SDL_DestroyRenderer);
+	_renderer = std::shared_ptr<SDL_Renderer>(SDL_CreateRenderer(_window.get(), -1, SDL_RENDERER_ACCELERATED), SDL_DestroyRenderer);
 	if (_renderer == nullptr)
-		throw std::runtime_error(
-				std::string("Renderer creation failed: ") +
-				SDL_GetError());
+		throw std::runtime_error(std::string("Renderer creation failed: ") + SDL_GetError());
 }
 
 static std::map<SDL_Scancode, std::pair<unsigned, unsigned>> s_keymap {
@@ -84,34 +76,33 @@ static std::map<SDL_Scancode, std::pair<unsigned, unsigned>> s_keymap {
 void Window::handle_event(const SDL_Event &event)
 {
 	switch(event.type) {
-	case SDL_QUIT:
-		_want_quit = true;
-		break;
-	case SDL_KEYDOWN:
-		if (event.key.keysym.scancode == SDL_SCANCODE_ESCAPE)
-			cpu.reset();
-		if (event.key.keysym.scancode == SDL_SCANCODE_F6)
-			cpu.save_state_sna("save.sna");
-		if (event.key.keysym.scancode == SDL_SCANCODE_F9)
-			cpu.load_state_sna("save.sna");
-		if (event.key.keysym.scancode == SDL_SCANCODE_F10)
-		if (event.key.keysym.scancode == SDL_SCANCODE_F11)
-
-		{
-			auto k = s_keymap.find(event.key.keysym.scancode);
-			if (k == s_keymap.end()) break;
-			io.keydown(k->second.first, k->second.second);
-		}
-		break;
-	case SDL_KEYUP:
-		{
-			auto k = s_keymap.find(event.key.keysym.scancode);
-			if (k == s_keymap.end()) break;
-			io.keyup(k->second.first, k->second.second);
-		}
-		break;
-	default:
-		;
+		case SDL_QUIT:
+			_want_quit = true;
+			break;
+		case SDL_KEYDOWN:
+			if (event.key.keysym.scancode == SDL_SCANCODE_ESCAPE)
+				cpu.reset();
+			if (event.key.keysym.scancode == SDL_SCANCODE_F6)
+				cpu.save_state_sna("save.sna");
+			if (event.key.keysym.scancode == SDL_SCANCODE_F9)
+				cpu.load_state_sna("save.sna");
+			if (event.key.keysym.scancode == SDL_SCANCODE_F8)
+				cpu.load_state_sna("jetpac.sna");
+			{
+				auto k = s_keymap.find(event.key.keysym.scancode);
+				if (k == s_keymap.end()) break;
+				io.keydown(k->second.first, k->second.second);
+			}
+			break;
+		case SDL_KEYUP:
+			{
+				auto k = s_keymap.find(event.key.keysym.scancode);
+				if (k == s_keymap.end()) break;
+				io.keyup(k->second.first, k->second.second);
+			}
+			break;
+		default:
+			;
 	}
 }
 
@@ -122,8 +113,7 @@ void Window::handle_keys(const Uint8 *keys)
 void Window::do_logic()
 {
 	cpu.intr(0);
-//	cpu.ticks(71590);
-	cpu.ticks(25000);
+	cpu.ticks(75000);
 }
 
 void Window::render()
@@ -155,25 +145,25 @@ void Window::render()
 					( a10a8 << 5) |
 					(  a4a0 << 0);
 
-			uint8_t val = ram.read(raster_addr);
-			uint8_t attr = ram.read(attr_addr);
+			uint8_t val = system_bus.read(raster_addr);
+			uint8_t attr = system_bus.read(attr_addr);
 			uint8_t paper_col = ((attr >> 3) & 0x07) | ((attr & 0x40) >> 3);
 			uint8_t ink_col =   (attr & 0x07) | ((attr & 0x40) >> 3);
-[[maybe_unused]]uint8_t flash = (paper_col >> 7) & 1;
+//			uint8_t flash = (paper_col >> 7) & 1;
 
 			for (unsigned px = 0; px < 8; ++px) {
 
-				SDL_Rect pixel {
-					int(160 + PIXEL_SCALE * 8 * col + PIXEL_SCALE * px),
-					int(120 + PIXEL_SCALE * row),
-					PIXEL_SCALE, PIXEL_SCALE
-				};
+				SDL_Rect pixel { int(
+						WIDTH_POINT + PIXEL_SCALE * 8 * col + 3 * px), int(
+						HEIGHT_POINT + PIXEL_SCALE * row), PIXEL_SCALE,
+						PIXEL_SCALE };
 				if ((1 << (7 - px)) & val)
-					SDL_SetRenderDrawColor(_renderer.get(),
-							red[ink_col], gre[ink_col], blu[ink_col], 255);
+					SDL_SetRenderDrawColor(_renderer.get(), red[ink_col],
+							gre[ink_col], blu[ink_col], 255);
 				else
-					SDL_SetRenderDrawColor(_renderer.get(),
-							red[paper_col], gre[paper_col], blu[paper_col], 255);
+					SDL_SetRenderDrawColor(_renderer.get(), red[paper_col],
+							gre[paper_col], blu[paper_col], 255);
+
 				SDL_RenderFillRect(_renderer.get(), &pixel);
 			}
 		}
